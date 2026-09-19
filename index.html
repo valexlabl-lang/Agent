@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Агент">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.png">
+<title>Агент</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#262a33; --text:#e8eaf0; --muted:#8b91a0; --accent:#6c8cff; --user:#2a3350; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; }
+  body { display:flex; flex-direction:column; padding-top:env(safe-area-inset-top); }
+  header { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:17px; margin:0; flex:1; }
+  .tabs { display:flex; gap:4px; }
+  .tab { background:none; border:0; color:var(--muted); padding:6px 10px; border-radius:8px; font-size:14px; }
+  .tab.on { background:var(--panel); color:var(--text); }
+  main { flex:1; overflow:hidden; position:relative; }
+  .view { position:absolute; inset:0; overflow-y:auto; padding:12px; display:none; }
+  .view.on { display:block; }
+  #chat { display:none; flex-direction:column; }
+  #chat.on { display:flex; }
+  #log { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding-bottom:8px; }
+  .msg { max-width:88%; padding:9px 12px; border-radius:14px; white-space:pre-wrap; word-wrap:break-word; }
+  .msg.user { align-self:flex-end; background:var(--user); }
+  .msg.bot { align-self:flex-start; background:var(--panel); border:1px solid var(--line); }
+  .msg.sys { align-self:center; color:var(--muted); font-size:13px; background:none; }
+  #camwrap { display:none; margin-bottom:8px; position:relative; }
+  #camwrap.on { display:block; }
+  video { width:100%; max-height:32vh; object-fit:cover; border-radius:12px; background:#000; }
+  .bar { display:flex; gap:6px; padding:8px 12px calc(8px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:var(--bg); align-items:flex-end; }
+  .bar textarea { flex:1; resize:none; max-height:110px; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:14px; padding:9px 12px; font:inherit; }
+  .btn { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:50%; width:44px; height:44px; font-size:19px; flex:none; }
+  .btn.on { background:var(--accent); border-color:var(--accent); }
+  .btn.send { background:var(--accent); border-color:var(--accent); }
+  .btn.rec { background:#d64545; border-color:#d64545; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-bottom:8px; display:flex; gap:10px; align-items:flex-start; }
+  .card .t { flex:1; }
+  .card .s { color:var(--muted); font-size:13px; }
+  .card.done .t { text-decoration:line-through; color:var(--muted); }
+  .card button { background:none; border:0; color:var(--muted); font-size:18px; padding:0 4px; }
+  h2 { font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin:14px 0 8px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+  input[type=text],input[type=password],select { width:100%; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; }
+  .primary { background:var(--accent); color:#fff; border:0; border-radius:10px; padding:11px 16px; font:inherit; margin-top:12px; }
+  .hint { color:var(--muted); font-size:13px; margin-top:6px; }
+  .empty { color:var(--muted); text-align:center; padding:24px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Агент</h1>
+  <div class="tabs">
+    <button class="tab on" data-v="chat">Чат</button>
+    <button class="tab" data-v="tasks">Задачи</button>
+    <button class="tab" data-v="notes">Заметки</button>
+    <button class="tab" data-v="settings">⚙︎</button>
+  </div>
+</header>
+<main>
+  <section id="chat" class="view on">
+    <div id="camwrap"><video id="video" playsinline muted></video></div>
+    <div id="log"></div>
+  </section>
+  <section id="tasks" class="view"></section>
+  <section id="notes" class="view"></section>
+  <section id="settings" class="view">
+    <label>Ключ Anthropic API</label>
+    <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off">
+    <div class="hint">Хранится только на этом телефоне.</div>
+    <label>Модель</label>
+    <select id="model">
+      <option value="claude-sonnet-5">Claude Sonnet 5 (быстрее)</option>
+      <option value="claude-opus-5">Claude Opus 5 (умнее)</option>
+      <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (дешевле)</option>
+    </select>
+    <label>Как обращаться к вам</label>
+    <input type="text" id="userName" placeholder="Имя">
+    <label>Telegram-бот: токен (для отправки сообщений)</label>
+    <input type="password" id="tgToken" placeholder="123456:ABC..." autocomplete="off">
+    <label>Telegram: ваш chat_id</label>
+    <input type="text" id="tgChat" placeholder="например 123456789" inputmode="numeric">
+    <div class="hint">Токен создаётся у @BotFather, chat_id узнаете у @userinfobot. Нужны только для отправки сообщений от бота вам или в чат.</div>
+    <label><input type="checkbox" id="autoSpeak" checked> Озвучивать ответы</label>
+    <label><input type="checkbox" id="autoListen"> Слушать снова после ответа (режим разговора)</label>
+    <label>Синхронизация с Mac-агентом (GitHub Gist)</label>
+    <input type="password" id="githubToken" placeholder="GitHub personal access token (scope: gist)" autocomplete="off">
+    <input type="text" id="gistId" placeholder="Gist ID (создастся сам, или впишите тот же, что на Mac)" style="margin-top:8px">
+    <label><input type="checkbox" id="syncEnabled" checked> Синхронизировать задачи/заметки с Mac</label>
+    <div class="hint">Токен создаётся на github.com → Settings → Developer settings → Personal access tokens, с правом «gist». Впишите тот же токен и gist_id, что в ~/.mac-agent/config.json на Mac — тогда задачи и заметки будут общими.</div>
+    <button class="primary" id="saveSettings">Сохранить</button>
+    <button class="primary" id="wipe" style="background:#3a3f4b">Стереть все данные</button>
+  </section>
+</main>
+<div class="bar" id="bar">
+  <button class="btn" id="camBtn" title="Камера">📷</button>
+  <textarea id="input" rows="1" placeholder="Напишите или нажмите микрофон"></textarea>
+  <button class="btn" id="micBtn" title="Голос">🎤</button>
+  <button class="btn send" id="sendBtn" title="Отправить">➤</button>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ---------- хранилище ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('ag_' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('ag_' + k, JSON.stringify(v)); } catch {} }
+};
+let settings = Object.assign({ apiKey:'', model:'claude-sonnet-5', userName:'', tgToken:'', tgChat:'', autoSpeak:true, autoListen:false, githubToken:'', gistId:'', syncEnabled:true }, store.get('settings', {}));
+let tasks = store.get('tasks', []);
+let notes = store.get('notes', []);
+let reminders = store.get('reminders', []);
+let contentIdeas = store.get('contentIdeas', []); // идеи для RedNote — ведутся на Mac, здесь только храним для синхронизации
+let purchases = store.get('purchases', []); // покупки и цены с чеков — общие с Mac
+let history = store.get('history', []);   // сообщения для API
+let uid = () => Math.random().toString(36).slice(2, 9);
+let nowIso = () => new Date().toISOString();
+
+/* ---------- элементы ---------- */
+const $ = s => document.querySelector(s);
+const log = $('#log'), input = $('#input');
+
+/* ---------- вкладки ---------- */
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => showView(b.dataset.v));
+function showView(v) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.v === v));
+  document.querySelectorAll('.view').forEach(el => el.classList.toggle('on', el.id === v));
+  $('#bar').style.display = (v === 'chat') ? 'flex' : 'none';
+  if (v === 'tasks') renderTasks();
+  if (v === 'notes') renderNotes();
+  if (v === 'settings') fillSettings();
+}
+
+/* ---------- чат ---------- */
+function addMsg(role, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + role;
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+function restoreLog() {
+  history.forEach(m => {
+    if (typeof m.content === 'string') addMsg(m.role === 'user' ? 'user' : 'bot', m.content);
+    else if (m.role === 'assistant') {
+      const t = m.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      if (t) addMsg('bot', t);
+    }
+  });
+  if (!history.length) addMsg('sys', 'Скажите или напишите что-нибудь. Например: «запиши задачу купить хлеб» или «напомни через 10 минут позвонить».');
+}
+
+/* ---------- инструменты агента ---------- */
+const TOOLS = [
+  { name:'add_task', description:'Добавить задачу в список задач пользователя.', input_schema:{ type:'object', properties:{ title:{type:'string'}, due:{type:'string', description:'Срок в свободной форме, необязательно'} }, required:['title'] } },
+  { name:'list_tasks', description:'Показать все задачи с их id и статусом.', input_schema:{ type:'object', properties:{} } },
+  { name:'complete_task', description:'Отметить задачу выполненной по id.', input_schema:{ type:'object', properties:{ id:{type:'string'} }, required:['id'] } },
+  { name:'delete_task', description:'Удалить задачу по id.', input_schema:{ type:'object', properties:{ id:{type:'string'} }, required:['id'] } },
+  { name:'add_note', description:'Записать заметку.', input_schema:{ type:'object', properties:{ text:{type:'string'} }, required:['text'] } },
+  { name:'list_notes', description:'Показать все заметки.', input_schema:{ type:'object', properties:{} } },
+  { name:'set_reminder', description:'Поставить напоминание. Укажите либо minutes_from_now, либо at (ISO 8601 с часовым поясом пользователя).', input_schema:{ type:'object', properties:{ text:{type:'string'}, minutes_from_now:{type:'number'}, at:{type:'string'} }, required:['text'] } },
+  { name:'open_telegram', description:'Открыть приложение Telegram на телефоне (при необходимости — чат с указанным username).', input_schema:{ type:'object', properties:{ username:{type:'string', description:'username без @, необязательно'} } } },
+  { name:'send_telegram', description:'Отправить сообщение через Telegram-бота пользователя в его чат.', input_schema:{ type:'object', properties:{ text:{type:'string'} }, required:['text'] } },
+  { name:'open_link', description:'Открыть ссылку или приложение по URL-схеме (https://, tg://, tel:, maps:// и т.п.).', input_schema:{ type:'object', properties:{ url:{type:'string'} }, required:['url'] } },
+  { name:'web_search', description:'Найти в интернете товары, билеты, цены, магазины. Возвращает найденные ссылки. Не может сам оплатить или подтвердить покупку — только находит и может открыть страницу через open_link, оплату всегда заканчивает пользователь.', input_schema:{ type:'object', properties:{ query:{type:'string'} }, required:['query'] } },
+  { name:'add_purchase', description:'Запомнить купленный товар с ценой — например, если пользователь показал чек через камеру, вызови отдельно на каждую позицию.', input_schema:{ type:'object', properties:{ item:{type:'string'}, price:{type:'number'}, store:{type:'string'}, date:{type:'string'} }, required:['item','price'] } },
+  { name:'list_purchases', description:'Показать сохранённые покупки — все или по фильтру товар/магазин, чтобы сравнить цены.', input_schema:{ type:'object', properties:{ item:{type:'string'}, store:{type:'string'} } } },
+  { name:'delete_purchase', description:'Удалить запись о покупке по id.', input_schema:{ type:'object', properties:{ id:{type:'string'} }, required:['id'] } }
+];
+
+let pendingOpen = null; // ссылка, которую нужно открыть по нажатию (iOS требует жест пользователя)
+
+async function runTool(name, a) {
+  switch (name) {
+    case 'add_task': {
+      const t = { id: uid(), title: a.title, due: a.due || '', done: false, updated: nowIso(), deleted: false };
+      tasks.push(t); store.set('tasks', tasks); syncSoon(); return { ok:true, id:t.id };
+    }
+    case 'list_tasks': return tasks.filter(t => !t.deleted).map(t => ({ id:t.id, title:t.title, due:t.due, done:t.done }));
+    case 'complete_task': {
+      const t = tasks.find(x => x.id === a.id); if (!t) return { error:'нет такой задачи' };
+      t.done = true; t.updated = nowIso(); store.set('tasks', tasks); syncSoon(); return { ok:true };
+    }
+    case 'delete_task': {
+      const t = tasks.find(x => x.id === a.id); if (!t) return { ok:false };
+      t.deleted = true; t.updated = nowIso(); store.set('tasks', tasks); syncSoon(); return { ok:true };
+    }
+    case 'add_note': {
+      notes.push({ id: uid(), text: a.text, created: nowIso(), updated: nowIso(), deleted: false });
+      store.set('notes', notes); syncSoon(); return { ok:true };
+    }
+    case 'list_notes': return notes.filter(n => !n.deleted).map(n => ({ id:n.id, text:n.text, created:n.created }));
+    case 'set_reminder': {
+      let at = null;
+      if (typeof a.minutes_from_now === 'number') at = new Date(Date.now() + a.minutes_from_now * 60000).toISOString();
+      else if (a.at) { const d = Date.parse(a.at); if (!isNaN(d)) at = new Date(d).toISOString(); }
+      if (!at) return { error:'не удалось понять время напоминания' };
+      reminders.push({ id: uid(), text: a.text, at, fired:false, updated: nowIso(), deleted:false });
+      store.set('reminders', reminders); syncSoon();
+      scheduleReminders();
+      return { ok:true, at:new Date(at).toLocaleString('ru-RU') };
+    }
+    case 'open_telegram': {
+      pendingOpen = a.username ? 'tg://resolve?domain=' + encodeURIComponent(a.username) : 'tg://';
+      offerOpen('Открыть Telegram');
+      return { ok:true, note:'Пользователю показана кнопка «Открыть Telegram»: iOS разрешает открывать другие приложения только по нажатию.' };
+    }
+    case 'open_link': {
+      pendingOpen = a.url; offerOpen('Открыть ссылку');
+      return { ok:true, note:'Пользователю показана кнопка для открытия. iOS требует нажатия.' };
+    }
+    case 'send_telegram': {
+      if (!settings.tgToken || !settings.tgChat) return { error:'Telegram-бот не настроен в настройках' };
+      try {
+        const r = await fetch('https://api.telegram.org/bot' + settings.tgToken + '/sendMessage', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ chat_id: settings.tgChat, text: a.text })
+        });
+        const j = await r.json();
+        return j.ok ? { ok:true } : { error: j.description || 'ошибка Telegram' };
+      } catch (e) { return { error: String(e) }; }
+    }
+    case 'web_search': {
+      try {
+        const r = await fetch('https://api.duckduckgo.com/?q=' + encodeURIComponent(a.query) + '&format=json&no_html=1&skip_disambig=1');
+        const j = await r.json();
+        const results = [];
+        if (j.AbstractText && j.AbstractURL) results.push({ title: j.Heading || a.query, url: j.AbstractURL, snippet: j.AbstractText });
+        (j.RelatedTopics || []).forEach(t => { if (t.FirstURL && t.Text) results.push({ title: t.Text, url: t.FirstURL }); });
+        return results.length ? { results: results.slice(0, 5) } : { error:'этот способ поиска ничего не нашёл — точнее ищет тот же запрос на Mac-агенте' };
+      } catch (e) { return { error: String(e) }; }
+    }
+    case 'add_purchase': {
+      const p = { id: uid(), item: a.item, price: a.price, store: a.store || '', date: a.date || new Date().toISOString().slice(0,10), updated: nowIso(), deleted: false };
+      purchases.push(p); store.set('purchases', purchases); syncSoon(); return { ok:true, id:p.id };
+    }
+    case 'list_purchases': {
+      let items = purchases.filter(p => !p.deleted);
+      if (a.item) { const q = a.item.toLowerCase(); items = items.filter(p => p.item.toLowerCase().includes(q)); }
+      if (a.store) { const q = a.store.toLowerCase(); items = items.filter(p => (p.store||'').toLowerCase().includes(q)); }
+      return items.map(p => ({ id:p.id, item:p.item, price:p.price, store:p.store, date:p.date }));
+    }
+    case 'delete_purchase': {
+      const p = purchases.find(x => x.id === a.id); if (!p) return { ok:false };
+      p.deleted = true; p.updated = nowIso(); store.set('purchases', purchases); syncSoon(); return { ok:true };
+    }
+  }
+  return { error:'неизвестный инструмент' };
+}
+
+function offerOpen(label) {
+  const d = document.createElement('div');
+  d.className = 'msg sys';
+  const b = document.createElement('button');
+  b.className = 'primary'; b.style.marginTop = '0'; b.textContent = label;
+  b.onclick = () => { if (pendingOpen) { window.location.href = pendingOpen; pendingOpen = null; } };
+  d.appendChild(b); log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+
+/* ---------- напоминания (работают, пока приложение открыто) ---------- */
+let timers = [];
+function scheduleReminders() {
+  timers.forEach(clearTimeout); timers = [];
+  reminders.filter(r => !r.fired && !r.deleted).forEach(r => {
+    const ms = new Date(r.at).getTime() - Date.now();
+    if (ms <= 0) return fireReminder(r);
+    if (ms < 2147483000) timers.push(setTimeout(() => fireReminder(r), ms));
+  });
+}
+function fireReminder(r) {
+  if (r.fired) return;
+  r.fired = true; r.updated = nowIso(); store.set('reminders', reminders); syncSoon();
+  addMsg('bot', '⏰ Напоминание: ' + r.text);
+  speak('Напоминание: ' + r.text);
+  try { if (navigator.vibrate) navigator.vibrate([200,100,200]); } catch {}
+  try { if ('Notification' in window && Notification.permission === 'granted') new Notification('Напоминание', { body: r.text }); } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleReminders(); });
+
+/* ---------- Claude ---------- */
+function systemPrompt() {
+  const now = new Date();
+  return 'Ты — личный голосовой ассистент-агент на iPhone' + (settings.userName ? ' пользователя по имени ' + settings.userName : '') + '. ' +
+    'Отвечай по-русски, коротко и разговорно — твои ответы будут озвучены. Без markdown и списков. ' +
+    'Сейчас: ' + now.toLocaleString('ru-RU', { dateStyle:'full', timeStyle:'short' }) + ', часовой пояс ' + Intl.DateTimeFormat().resolvedOptions().timeZone + '. ' +
+    'Используй инструменты, когда пользователь просит записать задачу или заметку, поставить напоминание, открыть Telegram или отправить сообщение. ' +
+    'Если к сообщению приложен кадр с камеры, опиши то, что видишь, и ответь на вопрос. ' +
+    'Можешь искать товары, билеты и цены через web_search и открывать найденную страницу через open_link. ' +
+    'Никогда не вводи платёжные данные и не подтверждай покупку сам — только находишь варианты и открываешь страницу, оплату всегда заканчивает пользователь. ' +
+    'Если к сообщению приложен кадр с камеры и на нём чек — прочитай каждую позицию с ценой и вызови add_purchase отдельно на каждый товар; для сравнения цен вызови list_purchases. ' +
+    'Не утверждай, что что-то сделал, если инструмент вернул ошибку.';
+}
+
+async function callClaude(messages) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'content-type':'application/json',
+      'x-api-key': settings.apiKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true'
+    },
+    body: JSON.stringify({ model: settings.model, max_tokens: 1024, system: systemPrompt(), tools: TOOLS, messages })
+  });
+  if (!r.ok) {
+    let msg = 'Ошибка ' + r.status;
+    try { const j = await r.json(); if (j.error && j.error.message) msg += ': ' + j.error.message; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+// В истории для API храним картинки только в текущем сообщении — старые заменяем заглушкой, чтобы не раздувать память
+function trimHistory() {
+  history = history.slice(-40);
+  while (history.length && !(history[0].role === 'user' && (typeof history[0].content === 'string' || history[0].content.every(b => b.type !== 'tool_result')))) history.shift();
+  history.forEach((m, i) => {
+    if (i < history.length - 1 && Array.isArray(m.content)) {
+      m.content = m.content.map(b => b.type === 'image' ? { type:'text', text:'[кадр с камеры]' } : b);
+    }
+  });
+  store.set('history', history);
+}
+
+let busy = false;
+async function send(text) {
+  text = (text || '').trim();
+  if (!text || busy) return;
+  if (!settings.apiKey) { addMsg('sys', 'Сначала вставьте ключ API в настройках (⚙︎).'); showView('settings'); return; }
+  busy = true; $('#sendBtn').disabled = true;
+  stopSpeaking();
+  addMsg('user', text); input.value = ''; autosize();
+
+  let content = text;
+  if (camStream) {
+    const img = grabFrame();
+    if (img) content = [{ type:'image', source:{ type:'base64', media_type:'image/jpeg', data:img } }, { type:'text', text }];
+  }
+  history.push({ role:'user', content });
+  const thinking = addMsg('sys', '…');
+
+  try {
+    let finalText = '';
+    for (let step = 0; step < 6; step++) {
+      const res = await callClaude(history);
+      history.push({ role:'assistant', content: res.content });
+      const uses = res.content.filter(b => b.type === 'tool_use');
+      const txt = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      if (txt) finalText += (finalText ? ' ' : '') + txt;
+      if (!uses.length) break;
+      const results = [];
+      for (const u of uses) {
+        const out = await runTool(u.name, u.input || {});
+        results.push({ type:'tool_result', tool_use_id:u.id, content: JSON.stringify(out), is_error: !!out.error });
+      }
+      history.push({ role:'user', content: results });
+    }
+    thinking.remove();
+    if (finalText) { addMsg('bot', finalText); speak(finalText); }
+    else addMsg('sys', 'Готово.');
+  } catch (e) {
+    thinking.remove();
+    while (history.length && history[history.length - 1].role !== 'user') history.pop();
+    addMsg('sys', String(e.message || e));
+  } finally {
+    trimHistory();
+    busy = false; $('#sendBtn').disabled = false;
+    renderTasks(); renderNotes();
+  }
+}
+
+/* ---------- озвучка ---------- */
+let voice = null;
+function pickVoice() {
+  const vs = speechSynthesis.getVoices();
+  voice = vs.find(v => v.lang && v.lang.startsWith('ru')) || null;
+}
+if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+function speak(text) {
+  if (!settings.autoSpeak || !('speechSynthesis' in window)) { afterSpeak(); return; }
+  stopSpeaking();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ru-RU'; if (voice) u.voice = voice;
+  u.onend = afterSpeak; u.onerror = afterSpeak;
+  speechSynthesis.speak(u);
+}
+function stopSpeaking() { try { speechSynthesis.cancel(); } catch {} }
+function afterSpeak() { if (settings.autoListen && !listening && !busy) setTimeout(startListening, 300); }
+
+/* ---------- распознавание речи ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false;
+function startListening() {
+  if (!SR) { addMsg('sys', 'Голосовой ввод не поддерживается в этом браузере. Используйте Safari и диктовку клавиатуры.'); return; }
+  if (listening) { rec && rec.stop(); return; }
+  stopSpeaking();
+  rec = new SR(); rec.lang = 'ru-RU'; rec.interimResults = true; rec.continuous = false;
+  let finalText = '';
+  rec.onstart = () => { listening = true; $('#micBtn').classList.add('rec'); };
+  rec.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript; else interim += e.results[i][0].transcript;
+    }
+    input.value = (finalText + interim).trim(); autosize();
+  };
+  rec.onerror = e => { if (e.error === 'not-allowed') addMsg('sys', 'Нет доступа к микрофону. Разрешите его в настройках Safari для этого сайта.'); };
+  rec.onend = () => {
+    listening = false; $('#micBtn').classList.remove('rec');
+    if (finalText.trim()) send(finalText);
+  };
+  try { rec.start(); } catch {}
+}
+$('#micBtn').onclick = startListening;
+
+/* ---------- камера ---------- */
+let camStream = null;
+$('#camBtn').onclick = async () => {
+  if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; $('#camwrap').classList.remove('on'); $('#camBtn').classList.remove('on'); return; }
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' }, audio:false });
+    const v = $('#video'); v.srcObject = camStream; await v.play();
+    $('#camwrap').classList.add('on'); $('#camBtn').classList.add('on');
+    addMsg('sys', 'Камера включена: к каждому вашему сообщению прикладывается текущий кадр.');
+  } catch (e) { addMsg('sys', 'Не удалось включить камеру: ' + (e.message || e)); }
+};
+function grabFrame() {
+  const v = $('#video'); if (!v.videoWidth) return null;
+  const max = 768, k = Math.min(1, max / Math.max(v.videoWidth, v.videoHeight));
+  const c = document.createElement('canvas'); c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+  c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.7).split(',')[1];
+}
+
+/* ---------- задачи и заметки ---------- */
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function renderTasks() {
+  const el = $('#tasks');
+  const live = tasks.filter(t => !t.deleted);
+  const open = live.filter(t => !t.done), done = live.filter(t => t.done);
+  const card = t => '<div class="card ' + (t.done ? 'done' : '') + '"><input type="checkbox" data-c="' + t.id + '" ' + (t.done ? 'checked' : '') + '><div class="t">' + esc(t.title) + (t.due ? '<div class="s">' + esc(t.due) + '</div>' : '') + '</div><button data-d="' + t.id + '">✕</button></div>';
+  const rem = reminders.filter(r => !r.fired && !r.deleted).sort((a,b) => new Date(a.at) - new Date(b.at)).map(r => '<div class="card"><div class="t">⏰ ' + esc(r.text) + '<div class="s">' + new Date(r.at).toLocaleString('ru-RU') + '</div></div><button data-r="' + r.id + '">✕</button></div>').join('');
+  el.innerHTML = (open.length ? open.map(card).join('') : '<div class="empty">Открытых задач нет</div>') +
+    (rem ? '<h2>Напоминания</h2>' + rem : '') +
+    (done.length ? '<h2>Выполнено</h2>' + done.map(card).join('') : '');
+  el.querySelectorAll('[data-c]').forEach(c => c.onchange = () => { const t = tasks.find(x => x.id === c.dataset.c); if (t) { t.done = c.checked; t.updated = nowIso(); store.set('tasks', tasks); syncSoon(); renderTasks(); } });
+  el.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { const t = tasks.find(x => x.id === b.dataset.d); if (t) { t.deleted = true; t.updated = nowIso(); store.set('tasks', tasks); syncSoon(); renderTasks(); } });
+  el.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { const r = reminders.find(x => x.id === b.dataset.r); if (r) { r.deleted = true; r.updated = nowIso(); store.set('reminders', reminders); syncSoon(); } scheduleReminders(); renderTasks(); });
+}
+function renderNotes() {
+  const el = $('#notes');
+  const live = notes.filter(n => !n.deleted);
+  el.innerHTML = live.length ? live.slice().reverse().map(n => '<div class="card"><div class="t">' + esc(n.text) + '<div class="s">' + new Date(n.created).toLocaleString('ru-RU') + '</div></div><button data-n="' + n.id + '">✕</button></div>').join('') : '<div class="empty">Заметок пока нет</div>';
+  el.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { const n = notes.find(x => x.id === b.dataset.n); if (n) { n.deleted = true; n.updated = nowIso(); store.set('notes', notes); syncSoon(); renderNotes(); } });
+}
+
+/* ---------- настройки ---------- */
+function fillSettings() {
+  $('#apiKey').value = settings.apiKey; $('#model').value = settings.model; $('#userName').value = settings.userName;
+  $('#tgToken').value = settings.tgToken; $('#tgChat').value = settings.tgChat;
+  $('#autoSpeak').checked = settings.autoSpeak; $('#autoListen').checked = settings.autoListen;
+  $('#githubToken').value = settings.githubToken; $('#gistId').value = settings.gistId;
+  $('#syncEnabled').checked = settings.syncEnabled;
+}
+$('#saveSettings').onclick = async () => {
+  settings = {
+    apiKey:$('#apiKey').value.trim(), model:$('#model').value, userName:$('#userName').value.trim(),
+    tgToken:$('#tgToken').value.trim(), tgChat:$('#tgChat').value.trim(),
+    autoSpeak:$('#autoSpeak').checked, autoListen:$('#autoListen').checked,
+    githubToken:$('#githubToken').value.trim(), gistId:$('#gistId').value.trim(), syncEnabled:$('#syncEnabled').checked
+  };
+  store.set('settings', settings);
+  try { if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission(); } catch {}
+  startSyncLoop();
+  showView('chat');
+};
+$('#wipe').onclick = () => {
+  if (!confirm('Стереть ключ, задачи, заметки и историю на этом телефоне?')) return;
+  Object.keys(localStorage).filter(k => k.startsWith('ag_')).forEach(k => localStorage.removeItem(k));
+  location.reload();
+};
+
+/* ---------- синхронизация с Mac-агентом через тот же приватный GitHub Gist ---------- */
+const GIST_FILENAME = 'agent-sync.json';
+const SYNC_KEYS = ['tasks', 'notes', 'contentIdeas', 'reminders', 'purchases'];
+let syncTimer = null, syncPending = false;
+
+function gistHeaders() { return { 'Authorization': 'token ' + settings.githubToken, 'Accept': 'application/vnd.github+json' }; }
+
+async function gistEnsure() {
+  if (settings.gistId) return settings.gistId;
+  if (!settings.githubToken) return null;
+  try {
+    const r = await fetch('https://api.github.com/gists', {
+      method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, gistHeaders()),
+      body: JSON.stringify({ description: 'agent sync (mac + iphone)', public: false,
+        files: { [GIST_FILENAME]: { content: JSON.stringify({ tasks:[], notes:[], contentIdeas:[], reminders:[], purchases:[] }) } } })
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    settings.gistId = j.id; store.set('settings', settings);
+    return j.id;
+  } catch { return null; }
+}
+
+async function gistPull() {
+  const gid = await gistEnsure(); if (!gid) return null;
+  try {
+    const r = await fetch('https://api.github.com/gists/' + gid, { headers: gistHeaders() });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return JSON.parse(j.files[GIST_FILENAME].content);
+  } catch { return null; }
+}
+
+async function gistPush(payload) {
+  const gid = await gistEnsure(); if (!gid) return false;
+  try {
+    const r = await fetch('https://api.github.com/gists/' + gid, {
+      method: 'PATCH', headers: Object.assign({ 'Content-Type': 'application/json' }, gistHeaders()),
+      body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify(payload) } } })
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+function mergeList(local, remote) {
+  const byId = {};
+  (remote || []).forEach(item => { byId[item.id] = item; });
+  (local || []).forEach(item => {
+    const cur = byId[item.id];
+    if (!cur || (item.updated || '') >= (cur.updated || '')) byId[item.id] = item;
+  });
+  return Object.values(byId);
+}
+
+async function syncNow() {
+  if (!settings.syncEnabled || !settings.githubToken) return;
+  const remote = await gistPull();
+  if (!remote) return;
+  tasks = mergeList(tasks, remote.tasks); store.set('tasks', tasks);
+  notes = mergeList(notes, remote.notes); store.set('notes', notes);
+  contentIdeas = mergeList(contentIdeas, remote.contentIdeas); store.set('contentIdeas', contentIdeas);
+  reminders = mergeList(reminders, remote.reminders); store.set('reminders', reminders);
+  purchases = mergeList(purchases, remote.purchases); store.set('purchases', purchases);
+  await gistPush({ tasks, notes, contentIdeas, reminders, purchases });
+  scheduleReminders(); renderTasks(); renderNotes();
+}
+function syncSoon() {
+  if (syncPending) return;
+  syncPending = true;
+  setTimeout(() => { syncPending = false; syncNow(); }, 1500);
+}
+function startSyncLoop() {
+  if (syncTimer) clearInterval(syncTimer);
+  if (!settings.syncEnabled || !settings.githubToken) return;
+  syncNow();
+  syncTimer = setInterval(syncNow, 30000);
+}
+
+/* ---------- ввод ---------- */
+function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 110) + 'px'; }
+input.addEventListener('input', autosize);
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input.value); } });
+$('#sendBtn').onclick = () => send(input.value);
+
+/* ---------- старт ---------- */
+restoreLog();
+scheduleReminders();
+startSyncLoop();
+if (!settings.apiKey) showView('settings');
+})();
+</script>
+</body>
+</html>
